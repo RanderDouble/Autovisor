@@ -71,6 +71,13 @@ async def play_video(page: Page) -> None:
             await page.wait_for_selector("video", state="attached", timeout=1000)
             paused = await page.evaluate("document.querySelector('video').paused")
             if paused:
+                # 如果视频已播完(距结尾不到1秒), 不再重新播放
+                ended = await page.evaluate("""() => {
+                    const v = document.querySelector('video');
+                    return v.currentTime >= v.duration - 1;
+                }""")
+                if ended:
+                    continue
                 logger.info("检测到视频暂停,正在尝试播放.")
                 await page.wait_for_selector(".videoArea", timeout=1000)
                 await page.evaluate('document.querySelector("video").play();')

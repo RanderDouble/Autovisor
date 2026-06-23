@@ -77,11 +77,20 @@ def extract_whl(whl_path, extract_to):
 
 
 def get_system_arch():
-    arch = platform.architecture()[0]
-    if arch == "64bit":
-        return "win_amd64"
+    if os.name == "nt":
+        arch = platform.architecture()[0]
+        if arch == "64bit":
+            return "win_amd64"
+        else:
+            return "win32"
     else:
-        return "win32"
+        machine = platform.machine()
+        if machine in ("x86_64", "AMD64"):
+            return "manylinux.*x86_64"
+        elif machine in ("aarch64", "arm64"):
+            return "manylinux.*aarch64"
+        else:
+            return "manylinux"
 
 
 def download_wheel(mirror_name, base_url, package_name, version=None):
@@ -127,13 +136,18 @@ def download_wheel(mirror_name, base_url, package_name, version=None):
     return whl_path
 
 
+def _version_tuple(v: str) -> tuple:
+    return tuple(int(x) for x in v.split("."))
+
 def is_installed(package, version):
     try:
-        # 尝试导入 package
         module = import_module(mapping[package])
         installed_version = getattr(module, "__version__", None)
         expected_version = normalize_version(package, version)
-        if installed_version and installed_version != expected_version:
+        if installed_version and _version_tuple(installed_version) >= _version_tuple(expected_version):
+            logger.info(f"{package}-{installed_version} 已安装！")
+            return module, True
+        if installed_version:
             logger.warn(f"检测到 {package}-{installed_version}，与目标版本 {version} 不一致，将重新安装。")
             return None, False
         logger.info(f"{package}-{version} 已安装！")

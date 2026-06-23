@@ -73,7 +73,7 @@ class Config:
         course_urls = []
         _options = self._config.options("course-url")
         for _option in _options:
-            course_url = self._config.get("course-url", _option, raw=True)
+            course_url = self._config.get("course-url", _option, raw=True).strip().strip('"')
             matched = re.findall(self.course_match_rule, course_url)
             if not matched:
                 print(f"\"{course_url.strip()}\"\n不是一个有效网址,将忽略该网址.")

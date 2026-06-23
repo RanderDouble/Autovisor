@@ -2,18 +2,27 @@ import ctypes
 import json
 import os
 import os.path
+import sys
 from typing import List
 from playwright.async_api import Page, Locator
 from playwright.async_api import TimeoutError
 from playwright._impl._errors import TargetClosedError
-from pygetwindow import Win32Window
 
 from modules.configs import Config
 import time
-import pygetwindow as gw
 from modules.logger import Logger
 
 logger = Logger()
+
+IS_WINDOWS = os.name == "nt"
+if IS_WINDOWS:
+    from pygetwindow import Win32Window
+    import pygetwindow as gw
+else:
+    Win32Window = None  # type: ignore[assignment]
+    gw = None
+
+
 
 
 def get_runtime_root():
@@ -45,7 +54,8 @@ def clear_cookies(filename="cookies.json"):
 
 # 将python终端前置
 def bring_console_to_front():
-    # 获取当前控制台窗口句柄
+    if not IS_WINDOWS:
+        return
     hwnd = ctypes.windll.kernel32.GetConsoleWindow()
     if hwnd:
         ctypes.windll.user32.ShowWindow(hwnd, 5)  # SW_SHOW
@@ -53,6 +63,9 @@ def bring_console_to_front():
 
 
 async def display_window(page: Page) -> None:
+    if not IS_WINDOWS:
+        logger.info("当前系统不支持窗口管理,跳过窗口前置.")
+        return
     window = await get_browser_window(page)
     if window:
         window.show()
@@ -64,6 +77,9 @@ async def display_window(page: Page) -> None:
 
 
 async def hide_window(page: Page) -> None:
+    if not IS_WINDOWS:
+        logger.info("当前系统不支持窗口管理,跳过窗口隐藏.")
+        return
     window = await get_browser_window(page)
     if window:
         window.hide()
@@ -72,11 +88,12 @@ async def hide_window(page: Page) -> None:
         logger.warn("未找到播放窗口!")
 
 
-async def get_browser_window(page: Page) -> Win32Window | None:
+async def get_browser_window(page: Page):
+    if not IS_WINDOWS:
+        return None
     custom_title = "Autovisor - Playwright"
     await page.wait_for_load_state("domcontentloaded")
     await page.evaluate(f'document.title = "{custom_title}"')
-    # 获取所有窗口并尝试匹配 Playwright 窗口
     await page.wait_for_timeout(1000)
     win_list = gw.getWindowsWithTitle(custom_title)
     if win_list:
@@ -113,11 +130,11 @@ async def evaluate_on_element(page: Page, selector: str, js: str, timeout: float
         return
 
 
-async def optimize_page(page: Page, config: Config, is_new_version=False, is_hike_class=False) -> None:
+async def optimize_page(page: Page, config: Config, is_new_version=False, is_hike_class=False, is_aided=False, is_aismart=False) -> None:
     try:
-        #await page.wait_for_load_state("domcontentloaded")
-        await evaluate_js(page, ".studytime-div", config.pop_js, None, is_hike_class)
-        if not is_new_version:
+        if is_aismart or is_aided:
+            await evaluate_js(page, ".studytime-div", config.pop_js, 10000, is_hike_class)
+        if not is_new_version and not is_aismart and not is_aided:
             if not is_hike_class:
                 hour = time.localtime().tm_hour
                 if hour >= 18 or hour < 7:
@@ -148,8 +165,19 @@ async def get_video_attr(page, attr: str) -> any:
         return None
 
 
-async def get_lesson_name(page: Page, is_hike_class=False) -> str:
-    if is_hike_class:
+async def get_lesson_name(page: Page, is_hike_class=False, is_aided=False, is_aismart=False) -> str:
+    if is_aismart:
+        active = page.locator(".section-item-collapse-info.active")
+        if await active.count() > 0:
+            title_el = active.locator(".section-item-collapse-title")
+            title = await title_el.text_content()
+        else:
+            title = "未知"
+    elif is_aided:
+        active = page.locator(".file-item").first
+        name_el = active.locator(".file-name")
+        title = await name_el.text_content()
+    elif is_hike_class:
         #title_ele1 = await page.wait_for_selector("#sourceTit")
         title_ele = await page.wait_for_selector("span")
         await page.wait_for_timeout(500)
@@ -161,18 +189,35 @@ async def get_lesson_name(page: Page, is_hike_class=False) -> str:
     return title
 
 
-async def get_filtered_class(page: Page, is_new_version=False, is_hike_class=False, include_all=False) -> List[Locator]:
+async def get_filtered_class(page: Page, is_new_version=False, is_hike_class=False, include_all=False, is_aided=False) -> List[Locator]:
     try:
-        if is_new_version:
+        if is_aided:
+            await page.wait_for_selector(".file-progress", timeout=2000)
+        elif is_new_version:
             await page.wait_for_selector(".progress-num", timeout=2000)
-        if is_hike_class:
+        elif is_hike_class:
             await page.wait_for_selector(".icon-finish", timeout=2000)
         else:
             await page.wait_for_selector(".time_icofinish", timeout=2000)
     except TimeoutError:
         pass
 
-    if is_hike_class:
+    if is_aided:
+        all_class = await page.locator(".file-item").all()
+        if include_all:
+            logger.debug(f"Get to-review aided class: {len(all_class)}")
+            return all_class
+        to_learn_class = []
+        for each in all_class:
+            prog_el = each.locator(".file-progress")
+            if await prog_el.count() > 0:
+                progress = await prog_el.text_content()
+                if progress == "100%":
+                    continue
+            to_learn_class.append(each)
+        logger.debug(f"Get to-learn aided class: {len(to_learn_class)}/{len(all_class)}")
+        return to_learn_class
+    elif is_hike_class:
         all_class = await page.locator(".file-item").all()
         if include_all:
             pass
